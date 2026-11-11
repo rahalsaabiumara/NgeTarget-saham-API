@@ -1,0 +1,227 @@
+{
+  "info": {
+    "name": "NgeTarget Saham (PortoCalc AI) — REST API",
+    "_postman_id": "8e3b5c4d-71a9-4902-9a14-05b8f19e3c21",
+    "description": "Koleksi Postman resmi untuk menguji seluruh endpoint NgeTarget Saham API (Market Data IDX, Kalkulasi Portofolio, What-If Simulator, Forecasting, CRUD SQLite, Export CSV, dan Gemini AI Insight).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "recordId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. System & Docs",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/health"
+          }
+        },
+        {
+          "name": "OpenAPI 3.1 Spec (YAML)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/openapi.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Market Data (Saham IDX & Emas)",
+      "item": [
+        {
+          "name": "List Curated IDX Stocks & Gold",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/stocks/list"
+          }
+        },
+        {
+          "name": "Search IDX Symbol",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/stocks/search?q=bank",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "stocks", "search"],
+              "query": [{ "key": "q", "value": "bank" }]
+            }
+          }
+        },
+        {
+          "name": "Get Quote — HRTA.JK",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/stocks/quote/HRTA.JK"
+          }
+        },
+        {
+          "name": "Get Quote — Emas Spot (XAU-IDR)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/stocks/quote/XAU-IDR"
+          }
+        },
+        {
+          "name": "Get Daily History — XAU-IDR (1y)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/stocks/history/XAU-IDR?range=1y",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "stocks", "history", "XAU-IDR"],
+              "query": [{ "key": "range", "value": "1y" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Portfolio & Calculation",
+      "item": [
+        {
+          "name": "Instant Calculate + What-If (HRTA Reference)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyPrice\": 2455000,\n  \"sellPrice\": 2375000,\n  \"initialCapital\": 2100000,\n  \"currentAssetValue\": 2072900,\n  \"targetPct\": 10,\n  \"assetValueMode\": \"manual\",\n  \"whatIf\": {\n    \"priceChangePct\": 12,\n    \"additionalCapital\": 0\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/portfolio/calculate"
+          }
+        },
+        {
+          "name": "List Portfolio Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/portfolio?type=all",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "portfolio"],
+              "query": [{ "key": "type", "value": "all" }]
+            }
+          }
+        },
+        {
+          "name": "Create Portfolio Record",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"BBCA.JK\",\n  \"assetName\": \"Bank Central Asia Tbk\",\n  \"buyPrice\": 10200,\n  \"sellPrice\": 10175,\n  \"initialCapital\": 5100000,\n  \"units\": 500,\n  \"assetValueMode\": \"auto\",\n  \"targetPct\": 10,\n  \"recordDate\": \"2026-11-11\",\n  \"isSimulation\": false,\n  \"notes\": \"Akumulasi 5 lot\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portfolio"
+          }
+        },
+        {
+          "name": "Update Portfolio Record",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"HRTA\",\n  \"assetName\": \"Emas HRTA (Hartadinata)\",\n  \"buyPrice\": 2455000,\n  \"sellPrice\": 2390000,\n  \"initialCapital\": 2100000,\n  \"currentAssetValue\": 2086000,\n  \"targetPct\": 10,\n  \"assetValueMode\": \"manual\",\n  \"recordDate\": \"2026-11-11\",\n  \"isSimulation\": false,\n  \"notes\": \"Update harga buyback\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portfolio/{{recordId}}"
+          }
+        },
+        {
+          "name": "Delete Portfolio Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/portfolio/{{recordId}}"
+          }
+        },
+        {
+          "name": "Export Portfolio CSV",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/portfolio/export.csv?type=all",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "portfolio", "export.csv"],
+              "query": [{ "key": "type", "value": "all" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Forecasting",
+      "item": [
+        {
+          "name": "Forecast — Historical Trend (XAU-IDR 12 Months)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentAssetValue\": 2072900,\n  \"initialCapital\": 2100000,\n  \"targetPct\": 10,\n  \"months\": 12,\n  \"monthlyContribution\": 0,\n  \"method\": \"historical\",\n  \"symbol\": \"XAU-IDR\",\n  \"historyRange\": \"1y\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portfolio/forecast"
+          }
+        },
+        {
+          "name": "Forecast — Custom Return Assumption + DCA",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentAssetValue\": 2072900,\n  \"initialCapital\": 2100000,\n  \"targetPct\": 10,\n  \"months\": 12,\n  \"monthlyContribution\": 200000,\n  \"method\": \"assumption\",\n  \"annualReturnPct\": 12,\n  \"annualVolatilityPct\": 20\n}"
+            },
+            "url": "{{baseUrl}}/api/portfolio/forecast"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Gemini AI Advisor",
+      "item": [
+        {
+          "name": "Check Gemini AI Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/ai/status"
+          }
+        },
+        {
+          "name": "Generate AI Portfolio Insight",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"HRTA\",\n  \"assetName\": \"Emas HRTA (Hartadinata)\",\n  \"recordDate\": \"2026-11-09\",\n  \"buyPrice\": 2455000,\n  \"sellPrice\": 2375000,\n  \"initialCapital\": 2100000,\n  \"currentAssetValue\": 2072900,\n  \"targetPct\": 10,\n  \"assetValueMode\": \"manual\",\n  \"force\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/ai/insight"
+          }
+        }
+      ]
+    }
+  ]
+}

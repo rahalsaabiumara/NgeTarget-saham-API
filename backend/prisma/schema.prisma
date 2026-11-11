@@ -1,0 +1,53 @@
+// Skema database SQLite NgeTarget Saham.
+// Kolom PortfolioRecord mengikuti spreadsheet referensi:
+// BELI | JUAL | %RUGI | TANGGAL | ASET SAAT INI | MODAL AWAL | L/R | %L/R | TARGET >X%
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL") // default: file:./dev.db (relatif terhadap folder prisma/)
+}
+
+model PortfolioRecord {
+  id                String   @id @default(uuid())
+  symbol            String // contoh: "HRTA.JK" atau "HRTA"
+  assetName         String // contoh: "Emas HRTA (Hartadinata)"
+  buyPrice          Float // BELI
+  sellPrice         Float // JUAL
+  spreadLossPct     Float // %RUGI
+  recordDate        String // TANGGAL (ISO YYYY-MM-DD)
+  assetValueMode    String   @default("manual") // manual | auto
+  units             Float? // jumlah unit (lembar / gram), opsional
+  currentAssetValue Float // ASET SAAT INI
+  initialCapital    Float // MODAL AWAL
+  profitLossNominal Float // L/R
+  profitLossPct     Float // %L/R
+  targetPct         Float    @default(10) // TARGET %
+  isTargetMet       Boolean // Tercapai / Belum Tercapai
+  isSimulation      Boolean  @default(false) // simulasi "angan-angan"
+  notes             String?
+  aiInsightJson     String? // cache hasil insight AI (JSON)
+  aiInsightHash     String? // hash input saat insight dibuat (untuk validasi cache)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([recordDate])
+}
+
+/// Harga pasar terakhir yang berhasil diambil — fallback bila API eksternal gagal.
+model MarketQuoteCache {
+  symbol     String   @id
+  name       String
+  currency   String
+  buyPrice   Float
+  sellPrice  Float
+  lastPrice  Float
+  changePct  Float?
+  priceBasis String
+  fetchedAt  DateTime
+}
+

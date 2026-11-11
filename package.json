@@ -1,0 +1,31 @@
+{
+  "name": "ngetarget-saham-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "REST API & Dokumentasi API untuk NgeTarget Saham (PortoCalc AI) — Express 5, SQLite (Prisma), Yahoo Finance IDX, Forecasting, & Gemini AI",
+  "workspaces": [
+    "shared",
+    "backend"
+  ],
+  "scripts": {
+    "setup": "npm install && npm run db:push -w backend",
+    "dev": "npm run dev -w backend",
+    "start": "npm run start -w backend",
+    "db:push": "npm run db:push -w backend",
+    "db:seed": "npm run db:seed -w backend",
+    "db:studio": "npm run db:studio -w backend",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w backend"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "@prisma/client@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.6": true
+  }
+}

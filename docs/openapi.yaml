@@ -1,0 +1,935 @@
+openapi: 3.1.0
+info:
+  title: NgeTarget Saham (PortoCalc AI) — REST API
+  version: 1.0.0
+  summary: REST API untuk kalkulasi portofolio, simulasi what-if, data saham IDX, forecasting, dan insight Gemini AI.
+  description: |
+    Dokumentasi spesifikasi OpenAPI untuk **NgeTarget Saham API (PortoCalc AI)**.
+
+    Layanan ini menyediakan:
+    - **Market Data (`yahoo-finance2`)**: Daftar kurasi saham Bursa Efek Indonesia (`.JK`), pencarian simbol, harga *live* `BELI` (*ask*) / `JUAL` (*bid*), harga emas spot dunia dalam Rupiah per gram (`XAU-IDR`), serta data penutupan historis disertai *fallback cache* SQLite.
+    - **Kalkulasi & Simulasi Portofolio**: Replikasi presisi rumus *spreadsheet* (`%RUGI`, `L/R`, `%L/R`, status `TARGET`, harga jual impas, dan harga jual target) serta simulasi *angan-angan* (*what-if*).
+    - **Manajemen Riwayat (SQLite + Prisma)**: Operasi CRUD catatan portofolio aktual maupun simulasi serta ekspor ke format `.csv` (UTF-8 BOM untuk Excel/Google Sheets).
+    - **Forecasting Engine**: Proyeksi nilai aset 1–60 bulan ke depan dalam skenario *Optimis (Bull)*, *Moderat (Base)*, dan *Pesimis (Bear)* berbasis tren historis maupun asumsi *return* tahunan + DCA.
+    - **Gemini AI Portfolio Advisor**: Diagnosis posisi, analisis *spread* `%RUGI`, dan rekomendasi strategis menggunakan `@google/genai` dengan *fallback rule-based* otomatis apabila `GEMINI_API_KEY` belum dikonfigurasi.
+  contact:
+    name: NgeTarget Saham Repository
+    url: https://github.com/rahalsaabiumara/NgeTarget-saham-API
+
+servers:
+  - url: http://localhost:4000
+    description: Local Development Server
+
+tags:
+  - name: System
+    description: Pemeriksaan kesehatan server, database SQLite, dan dokumentasi API.
+  - name: Market Data
+    description: Kuotasi harga pasar terkini, pencarian ticker BEI/IDX, dan data historis harian.
+  - name: Portfolio & Calculation
+    description: Kalkulasi instan, simulasi what-if, CRUD catatan portofolio, dan ekspor CSV.
+  - name: Forecasting
+    description: Proyeksi perkembangan nilai aset masa depan (historis atau asumsi return).
+  - name: AI Advisor
+    description: Analisis dan rekomendasi portofolio berbasis Google Gemini AI (+ fallback rule-based).
+
+paths:
+  /api/health:
+    get:
+      tags: [System]
+      summary: Cek status kesehatan server, koneksi SQLite, dan konfigurasi Gemini AI
+      operationId: getHealth
+      responses:
+        '200':
+          description: Server berjalan normal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ok
+                database: true
+                geminiConfigured: false
+                geminiModel: gemini-3.8-flash
+                time: '2026-11-11T01:45:00.000Z'
+
+  /api/openapi.yaml:
+    get:
+      tags: [System]
+      summary: Unduh spesifikasi mentah OpenAPI 3.1 (YAML)
+      operationId: getOpenApiSpec
+      responses:
+        '200':
+          description: File spesifikasi OpenAPI dalam format YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /api/docs:
+    get:
+      tags: [System]
+      summary: Halaman dokumentasi API interaktif (Scalar API Reference)
+      operationId: getApiDocsHtml
+      responses:
+        '200':
+          description: Halaman HTML interaktif untuk menjelajahi dan menguji endpoint API.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/stocks/list:
+    get:
+      tags: [Market Data]
+      summary: Daftar kurasi saham populer BEI/IDX dan emas spot (XAU-IDR)
+      operationId: listCuratedStocks
+      responses:
+        '200':
+          description: Array daftar instrumen saham dan komoditas emas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockListItem'
+              example:
+                - symbol: HRTA.JK
+                  name: Hartadinata Abadi Tbk
+                  sector: Emas & Perhiasan
+                  category: saham
+                - symbol: BBCA.JK
+                  name: Bank Central Asia Tbk
+                  sector: Perbankan
+                  category: saham
+                - symbol: XAU-IDR
+                  name: Emas Spot Dunia (Rp per gram)
+                  sector: Komoditas Emas
+                  category: emas
+
+  /api/stocks/search:
+    get:
+      tags: [Market Data]
+      summary: Cari ticker saham IDX berdasarkan kode atau nama emiten
+      operationId: searchStocks
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Kata kunci pencarian (minimal 2 karakter).
+          schema:
+            type: string
+            example: bank
+      responses:
+        '200':
+          description: Hasil pencarian saham IDX yang cocok.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockListItem'
+
+  /api/stocks/quote/{symbol}:
+    get:
+      tags: [Market Data]
+      summary: Ambil harga pasar terkini (BELI / ask, JUAL / bid, dan harga terakhir)
+      description: |
+        Mengambil kuotasi terbaru dari Yahoo Finance. Kode 4 huruf seperti `HRTA` atau `BBCA` otomatis dinormalisasi menjadi `HRTA.JK` / `BBCA.JK`. Gunakan `XAU-IDR` untuk harga emas spot dunia dalam Rupiah per gram.
+        Apabila Yahoo Finance sedang tidak dapat diakses, endpoint otomatis mengembalikan data terakhir dari *cache* SQLite (`source: "cache"`).
+      operationId: getStockQuote
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          description: Simbol saham IDX (mis. `HRTA.JK`, `BBCA`) atau `XAU-IDR`.
+          schema:
+            type: string
+            example: HRTA.JK
+      responses:
+        '200':
+          description: Data kuotasi harga berhasil diambil.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockQuote'
+              example:
+                symbol: HRTA.JK
+                name: PT Hartadinata Abadi Tbk
+                currency: IDR
+                buyPrice: 1415
+                sellPrice: 1410
+                lastPrice: 1415
+                changePct: 5.597
+                marketState: REGULAR
+                source: live
+                priceBasis: BELI = ask (offer), JUAL = bid — harga per lembar
+                fetchedAt: '2026-11-11T01:45:00.000Z'
+        '404':
+          description: Simbol tidak ditemukan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Gagal mengambil data dari penyedia eksternal dan belum ada cache lokal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/stocks/history/{symbol}:
+    get:
+      tags: [Market Data]
+      summary: Ambil riwayat harga penutupan harian (OHLC close)
+      operationId: getStockHistory
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          description: Simbol saham IDX (mis. `HRTA.JK`) atau `XAU-IDR`.
+          schema:
+            type: string
+            example: XAU-IDR
+        - name: range
+          in: query
+          required: false
+          description: Rentang waktu data historis.
+          schema:
+            type: string
+            enum: [1m, 3m, 6m, 1y]
+            default: 3m
+      responses:
+        '200':
+          description: Deret waktu harga penutupan harian (urut terlama ke terbaru).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PricePoint'
+              example:
+                - date: '2026-11-06'
+                  close: 2375000
+                - date: '2026-11-09'
+                  close: 2389741
+
+  /api/portfolio/calculate:
+    post:
+      tags: [Portfolio & Calculation]
+      summary: Kalkulasi instan metrik portofolio & simulasi angan-angan (tanpa simpan ke DB)
+      operationId: calculatePortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalculateRequest'
+            example:
+              buyPrice: 2455000
+              sellPrice: 2375000
+              initialCapital: 2100000
+              currentAssetValue: 2072900
+              targetPct: 10
+              assetValueMode: manual
+              whatIf:
+                priceChangePct: 12
+                additionalCapital: 0
+      responses:
+        '200':
+          description: Hasil perhitungan metrik utama dan skenario what-if (bila diminta).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: '#/components/schemas/CalculationResult'
+                  whatIf:
+                    $ref: '#/components/schemas/CalculationResult'
+        '400':
+          description: Input tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/portfolio:
+    get:
+      tags: [Portfolio & Calculation]
+      summary: Ambil seluruh catatan portofolio dari SQLite
+      operationId: listPortfolioRecords
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter berdasarkan jenis catatan (`all`, `actual`, atau `simulation`).
+          schema:
+            type: string
+            enum: [all, actual, simulation]
+            default: all
+      responses:
+        '200':
+          description: Daftar catatan portofolio terurut dari tanggal terbaru.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PortfolioRecord'
+    post:
+      tags: [Portfolio & Calculation]
+      summary: Simpan catatan kalkulasi portofolio baru ke SQLite
+      operationId: createPortfolioRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortfolioRecordInput'
+            example:
+              symbol: HRTA
+              assetName: Emas HRTA (Hartadinata)
+              buyPrice: 2455000
+              sellPrice: 2375000
+              initialCapital: 2100000
+              currentAssetValue: 2072900
+              targetPct: 10
+              assetValueMode: manual
+              recordDate: '2026-11-09'
+              isSimulation: false
+              notes: Contoh dari spreadsheet referensi.
+      responses:
+        '201':
+          description: Catatan berhasil dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioRecord'
+        '400':
+          description: Validasi input gagal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/portfolio/{id}:
+    put:
+      tags: [Portfolio & Calculation]
+      summary: Perbarui catatan portofolio berdasarkan ID
+      operationId: updatePortfolioRecord
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID catatan portofolio.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortfolioRecordInput'
+      responses:
+        '200':
+          description: Catatan berhasil diperbarui (cache insight AI di-reset otomatis).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioRecord'
+        '400':
+          description: Input tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Catatan tidak ditemukan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Portfolio & Calculation]
+      summary: Hapus catatan portofolio berdasarkan ID
+      operationId: deletePortfolioRecord
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID catatan portofolio.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Catatan berhasil dihapus.
+        '404':
+          description: Catatan tidak ditemukan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/portfolio/export.csv:
+    get:
+      tags: [Portfolio & Calculation]
+      summary: Ekspor tabel portofolio ke file CSV (UTF-8 dengan BOM)
+      operationId: exportPortfolioCsv
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter jenis catatan yang diekspor.
+          schema:
+            type: string
+            enum: [all, actual, simulation]
+            default: all
+      responses:
+        '200':
+          description: File CSV siap dibuka di Microsoft Excel atau Google Sheets.
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  /api/portfolio/forecast:
+    post:
+      tags: [Forecasting]
+      summary: Proyeksi perkembangan nilai aset di masa depan (skenario Bull, Base, Bear)
+      operationId: forecastPortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForecastRequest'
+            example:
+              currentAssetValue: 2072900
+              initialCapital: 2100000
+              targetPct: 10
+              months: 12
+              monthlyContribution: 0
+              method: historical
+              symbol: XAU-IDR
+              historyRange: 1y
+      responses:
+        '200':
+          description: Deret waktu proyeksi bulanan dan estimasi bulan tercapainya target.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        '400':
+          description: Parameter proyeksi tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/ai/status:
+    get:
+      tags: [AI Advisor]
+      summary: Cek status ketersediaan konfigurasi Gemini AI (tanpa mengekspos API key)
+      operationId: getAiStatus
+      responses:
+        '200':
+          description: Informasi apakah GEMINI_API_KEY aktif dan nama model yang digunakan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [geminiConfigured, model]
+                properties:
+                  geminiConfigured:
+                    type: boolean
+                  model:
+                    type: string
+              example:
+                geminiConfigured: true
+                model: gemini-3.8-flash
+
+  /api/ai/insight:
+    post:
+      tags: [AI Advisor]
+      summary: Hasilkan diagnosis posisi, analisis spread, dan rekomendasi strategi investasi
+      description: |
+        Memanggil Google Gemini AI (`@google/genai`) menggunakan `GEMINI_API_KEY` di server.
+        - Apabila `recordId` disertakan dan input belum berubah (`force: false`), hasil diambil dari *cache* SQLite.
+        - Apabila `GEMINI_API_KEY` kosong atau pemanggilan eksternal gagal, sistem otomatis mengembalikan analisis *rule-based* (`source: "rule-based"`) sehingga klien tidak pernah gagal.
+      operationId: generateAiInsight
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiInsightRequest'
+            example:
+              symbol: HRTA
+              assetName: Emas HRTA (Hartadinata)
+              recordDate: '2026-11-09'
+              buyPrice: 2455000
+              sellPrice: 2375000
+              initialCapital: 2100000
+              currentAssetValue: 2072900
+              targetPct: 10
+              assetValueMode: manual
+              force: false
+      responses:
+        '200':
+          description: Analisis dan rekomendasi portofolio berhasil dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiInsightResponse'
+        '400':
+          description: Input tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Input tidak valid.
+        details:
+          oneOf:
+            - type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            - type: array
+              items:
+                type: string
+
+    HealthStatus:
+      type: object
+      required: [status, database, geminiConfigured, geminiModel, time]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        database:
+          type: boolean
+        geminiConfigured:
+          type: boolean
+        geminiModel:
+          type: string
+        time:
+          type: string
+          format: date-time
+
+    StockListItem:
+      type: object
+      required: [symbol, name, sector, category]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        sector:
+          type: string
+        category:
+          type: string
+          enum: [saham, emas, custom]
+
+    StockQuote:
+      type: object
+      required: [symbol, name, currency, buyPrice, sellPrice, lastPrice, source, priceBasis, fetchedAt]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        buyPrice:
+          type: number
+        sellPrice:
+          type: number
+        lastPrice:
+          type: number
+        changePct:
+          type: [number, 'null']
+        marketState:
+          type: [string, 'null']
+        source:
+          type: string
+          enum: [live, cache]
+        priceBasis:
+          type: string
+        fetchedAt:
+          type: string
+          format: date-time
+
+    PricePoint:
+      type: object
+      required: [date, close]
+      properties:
+        date:
+          type: string
+          format: date
+        close:
+          type: number
+
+    CalculationInput:
+      type: object
+      required: [buyPrice, sellPrice, initialCapital]
+      properties:
+        buyPrice:
+          type: number
+          exclusiveMinimum: 0
+          description: Harga BELI per unit (lembar/gram).
+        sellPrice:
+          type: number
+          minimum: 0
+          description: Harga JUAL / buyback per unit saat ini.
+        initialCapital:
+          type: number
+          exclusiveMinimum: 0
+          description: MODAL AWAL dalam Rupiah.
+        currentAssetValue:
+          type: [number, 'null']
+          minimum: 0
+          description: ASET SAAT INI (wajib bila assetValueMode = manual).
+        targetPct:
+          type: number
+          default: 10
+          description: Target persentase keuntungan (%).
+        assetValueMode:
+          type: string
+          enum: [manual, auto]
+          default: manual
+        units:
+          type: [number, 'null']
+          minimum: 0
+          description: Jumlah unit dimiliki (opsional untuk mode auto).
+
+    CalculateRequest:
+      allOf:
+        - $ref: '#/components/schemas/CalculationInput'
+        - type: object
+          properties:
+            whatIf:
+              type: object
+              properties:
+                priceChangePct:
+                  type: number
+                  default: 0
+                additionalCapital:
+                  type: number
+                  minimum: 0
+                  default: 0
+
+    CalculationResult:
+      type: object
+      required:
+        - buyPrice
+        - sellPrice
+        - spreadLossPct
+        - currentAssetValue
+        - initialCapital
+        - profitLossNominal
+        - profitLossPct
+        - targetPct
+        - targetAssetValue
+        - shortfallToTarget
+        - isTargetMet
+        - targetStatusLabel
+      properties:
+        buyPrice:
+          type: number
+        sellPrice:
+          type: number
+        spreadLossPct:
+          type: number
+          description: '%RUGI — ((BELI - JUAL) / BELI) * 100'
+        currentAssetValue:
+          type: number
+        initialCapital:
+          type: number
+        profitLossNominal:
+          type: number
+          description: 'L/R — ASET SAAT INI - MODAL AWAL'
+        profitLossPct:
+          type: number
+          description: '%L/R — (L/R / MODAL AWAL) * 100'
+        targetPct:
+          type: number
+        targetAssetValue:
+          type: number
+        shortfallToTarget:
+          type: number
+        isTargetMet:
+          type: boolean
+        targetStatusLabel:
+          type: string
+          enum: [Tercapai, Belum Tercapai]
+        breakEvenSellPrice:
+          type: [number, 'null']
+        requiredSellPriceForTarget:
+          type: [number, 'null']
+        requiredPriceChangePct:
+          type: [number, 'null']
+
+    PortfolioRecordInput:
+      allOf:
+        - $ref: '#/components/schemas/CalculationInput'
+        - type: object
+          required: [symbol, assetName, recordDate]
+          properties:
+            symbol:
+              type: string
+              maxLength: 32
+            assetName:
+              type: string
+              maxLength: 120
+            recordDate:
+              type: string
+              pattern: '^\d{4}-\d{2}-\d{2}$'
+            isSimulation:
+              type: boolean
+              default: false
+            notes:
+              type: [string, 'null']
+              maxLength: 500
+
+    PortfolioRecord:
+      allOf:
+        - $ref: '#/components/schemas/CalculationResult'
+        - type: object
+          required: [id, symbol, assetName, recordDate, assetValueMode, isSimulation, hasAiInsight, createdAt, updatedAt]
+          properties:
+            id:
+              type: string
+              format: uuid
+            symbol:
+              type: string
+            assetName:
+              type: string
+            recordDate:
+              type: string
+              format: date
+            assetValueMode:
+              type: string
+              enum: [manual, auto]
+            units:
+              type: [number, 'null']
+            isSimulation:
+              type: boolean
+            notes:
+              type: [string, 'null']
+            hasAiInsight:
+              type: boolean
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ForecastRequest:
+      type: object
+      required: [currentAssetValue, initialCapital]
+      properties:
+        currentAssetValue:
+          type: number
+          minimum: 0
+        initialCapital:
+          type: number
+          exclusiveMinimum: 0
+        targetPct:
+          type: number
+          default: 10
+        months:
+          type: integer
+          minimum: 1
+          maximum: 60
+          default: 12
+        monthlyContribution:
+          type: number
+          minimum: 0
+          default: 0
+        method:
+          type: string
+          enum: [historical, assumption]
+          default: historical
+        annualReturnPct:
+          type: number
+          description: Dipakai ketika method = assumption (default 8%).
+        annualVolatilityPct:
+          type: number
+          description: Dipakai ketika method = assumption (default 20%).
+        symbol:
+          type: string
+          description: Simbol acuan historis (mis. HRTA.JK atau XAU-IDR).
+        historyRange:
+          type: string
+          enum: [1m, 3m, 6m, 1y]
+          default: 3m
+        startDate:
+          type: string
+          format: date
+
+    ForecastPoint:
+      type: object
+      required: [month, date, invested, targetValue, base, bull, bear]
+      properties:
+        month:
+          type: integer
+        date:
+          type: string
+          format: date
+        invested:
+          type: number
+        targetValue:
+          type: number
+        base:
+          type: number
+        bull:
+          type: number
+        bear:
+          type: number
+
+    ForecastResponse:
+      type: object
+      required:
+        - method
+        - sampleSize
+        - dailyDrift
+        - dailyVolatility
+        - annualizedReturnPct
+        - annualizedVolatilityPct
+        - points
+        - targetHitMonth
+      properties:
+        method:
+          type: string
+          enum: [historical, assumption]
+        sampleSize:
+          type: integer
+        dailyDrift:
+          type: number
+        dailyVolatility:
+          type: number
+        annualizedReturnPct:
+          type: number
+        annualizedVolatilityPct:
+          type: number
+        rawAnnualizedReturnPct:
+          type: [number, 'null']
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForecastPoint'
+        targetHitMonth:
+          type: object
+          properties:
+            base:
+              type: [integer, 'null']
+            bull:
+              type: [integer, 'null']
+            bear:
+              type: [integer, 'null']
+        notice:
+          type: string
+
+    AiInsightRequest:
+      allOf:
+        - $ref: '#/components/schemas/CalculationInput'
+        - type: object
+          required: [symbol, assetName, recordDate]
+          properties:
+            symbol:
+              type: string
+            assetName:
+              type: string
+            recordDate:
+              type: string
+            recordId:
+              type: [string, 'null']
+              format: uuid
+            force:
+              type: boolean
+              default: false
+            forecast:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum: [historical, assumption]
+                months:
+                  type: number
+                annualizedReturnPct:
+                  type: number
+                annualizedVolatilityPct:
+                  type: number
+                finalBase:
+                  type: number
+                finalBull:
+                  type: number
+                finalBear:
+                  type: number
+                targetHitMonth:
+                  type: object
+                  properties:
+                    base:
+                      type: [number, 'null']
+                    bull:
+                      type: [number, 'null']
+                    bear:
+                      type: [number, 'null']
+
+    AiInsightResponse:
+      type: object
+      required: [insight, source, model, cached, generatedAt]
+      properties:
+        insight:
+          type: object
+          required: [summary, spreadAnalysis, targetStrategy, recommendations, riskLevel, disclaimer]
+          properties:
+            summary:
+              type: string
+            spreadAnalysis:
+              type: string
+            targetStrategy:
+              type: string
+            recommendations:
+              type: array
+              items:
+                type: object
+                required: [title, detail]
+                properties:
+                  title:
+                    type: string
+                  detail:
+                    type: string
+            riskLevel:
+              type: string
+              enum: [rendah, sedang, tinggi]
+            disclaimer:
+              type: string
+        source:
+          type: string
+          enum: [gemini, rule-based]
+        model:
+          type: [string, 'null']
+        cached:
+          type: boolean
+        generatedAt:
+          type: string
+          format: date-time
+        notice:
+          type: string
